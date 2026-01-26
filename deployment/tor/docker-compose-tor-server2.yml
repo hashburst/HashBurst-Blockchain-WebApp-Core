@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # Tor Hidden Service for Server 2
+  tor:
+    image: goldy/tor-hidden-service:latest
+    container_name: hashburst-tor
+    restart: unless-stopped
+    volumes:
+      - ./torrc-server2:/etc/tor/torrc:ro
+      - tor-data:/var/lib/tor
+    ports:
+      - "9050:9050"  # SOCKS proxy
+      - "9051:9051"  # Control port
+    networks:
+      - hashburst-network
+    environment:
+      - TOR_LOG_LEVEL=notice
+    healthcheck:
+      test: ["CMD", "curl", "-x", "socks5h://localhost:9050", "-f", "https://check.torproject.org"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  # Tor proxy for outbound connections
+  tor-proxy:
+    image: dperson/torproxy:latest
+    container_name: hashburst-tor-proxy
+    restart: unless-stopped
+    ports:
+      - "8118:8118"  # Privoxy HTTP proxy
+      - "9150:9050"  # Additional SOCKS port
+    networks:
+      - hashburst-network
+    environment:
+      - TOR_MaxCircuitDirtiness=600
+      - TOR_NumEntryGuards=8
+
+networks:
+  hashburst-network:
+    external: true
+
+volumes:
+  tor-data:

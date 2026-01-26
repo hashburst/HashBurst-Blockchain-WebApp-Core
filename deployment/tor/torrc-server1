@@ -1,0 +1,37 @@
+## HashBurst Tor Hidden Services Configuration - Server 1
+## This file configures Tor hidden services for darkweb access
+
+# Tor Settings
+SocksPort 0.0.0.0:9050
+ControlPort 9051
+CookieAuthentication 1
+DataDirectory /var/lib/tor
+
+# Hidden Service for HashBurst Node 1 RPC
+HiddenServiceDir /var/lib/tor/hashburst-node1-rpc/
+HiddenServicePort 80 hashburst-node-1:8002
+HiddenServiceVersion 3
+
+# Hidden Service for IPFS Gateway
+HiddenServiceDir /var/lib/tor/ipfs-gateway/
+HiddenServicePort 80 ipfs-node-1:8080
+HiddenServiceVersion 3
+
+# Hidden Service for IPFS API
+HiddenServiceDir /var/lib/tor/ipfs-api/
+HiddenServicePort 80 ipfs-node-1:5001
+HiddenServiceVersion 3
+
+# Hidden Service for Web Dashboard
+HiddenServiceDir /var/lib/tor/hashburst-web/
+HiddenServicePort 80 nginx:80
+HiddenServiceVersion 3
+
+# Hidden Service for P2P Network (Direct onion routing)
+HiddenServiceDir /var/lib/tor/hashburst-p2p/
+HiddenServicePort 30303 hashburst-node-1:30303
+HiddenServiceVersion 3
+
+# Security Settings
+ExitPolicy reject *:*
+ExitRelay 0

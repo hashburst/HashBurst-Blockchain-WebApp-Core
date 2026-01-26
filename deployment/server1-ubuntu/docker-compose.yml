@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  # HashBurst Main Network Node 1
+  hashburst-node-1:
+    image: hashburst/node:latest
+    container_name: hashburst-mainnet-node-1
+    restart: unless-stopped
+    ports:
+      - "8002:8002"    # RPC API
+      - "30303:30303"  # P2P
+      - "8001:8001"    # Backend API
+    volumes:
+      - ./node1-data:/data
+      - ./node1-config.json:/config/node-config.json
+    environment:
+      - NODE_NAME=hashburst-mainnet-1
+      - NODE_TYPE=validator
+      - NETWORK=mainnet
+      - RPC_HOST=0.0.0.0
+      - RPC_PORT=8002
+      - P2P_HOST=0.0.0.0
+      - P2P_PORT=30303
+      - EXTERNAL_IP=31.25.11.195
+      - BOOTSTRAP_NODES=31.25.11.195:30303,85.187.128.14:30304,85.187.128.14:30305
+    networks:
+      - hashburst-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # IPFS Node 1
+  ipfs-node-1:
+    image: ipfs/kubo:latest
+    container_name: ipfs-mainnet-node-1
+    restart: unless-stopped
+    ports:
+      - "8080:8080"    # Gateway
+      - "5001:5001"    # API
+      - "4001:4001"    # Swarm
+    volumes:
+      - ./ipfs1-data:/data/ipfs
+      - ./ipfs1-config:/config
+    environment:
+      - IPFS_PROFILE=server
+      - IPFS_PATH=/data/ipfs
+    networks:
+      - hashburst-network
+    command: >
+      sh -c "ipfs init --profile=server || true &&
+             ipfs config Addresses.Gateway /ip4/0.0.0.0/tcp/8080 &&
+             ipfs config Addresses.API /ip4/0.0.0.0/tcp/5001 &&
+             ipfs config --json API.HTTPHeaders.Access-Control-Allow-Origin '[\"*\"]' &&
+             ipfs config --json API.HTTPHeaders.Access-Control-Allow-Methods '[\"GET\", \"POST\", \"PUT\"]' &&
+             ipfs bootstrap add /ip4/85.187.128.14/tcp/4002/p2p/12D3KooWNodeId2 &&
+             ipfs daemon --migrate=true"
+
+  # Postgres for local caching (optional)
+  postgres:
+    image: postgres:15-alpine
+    container_name: hashburst-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=hashburst
+      - POSTGRES_USER=hashburst
+      - POSTGRES_PASSWORD=hashburst_secure_password_change_me
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - hashburst-network
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: hashburst-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    networks:
+      - hashburst-network
+    depends_on:
+      - hashburst-node-1
+      - ipfs-node-1
+
+networks:
+  hashburst-network:
+    driver: bridge

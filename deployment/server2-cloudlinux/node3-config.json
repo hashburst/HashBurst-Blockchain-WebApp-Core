@@ -1,0 +1,77 @@
+{
+  "node": {
+    "name": "hashburst-mainnet-3",
+    "id": "node-003-mainnet-validator",
+    "network": "mainnet",
+    "type": "validator",
+    "externalIp": "85.187.128.14",
+    "externalPort": 30305,
+    "rpc": {
+      "host": "0.0.0.0",
+      "port": 8002,
+      "cors": ["*"],
+      "maxConnections": 100
+    },
+    "p2p": {
+      "host": "0.0.0.0",
+      "port": 30303,
+      "maxPeers": 50,
+      "bootstrapNodes": [
+        "enode://31.25.11.195:30303",
+        "enode://85.187.128.14:30304",
+        "enode://85.187.128.14:30305"
+      ]
+    },
+    "backend": {
+      "host": "0.0.0.0",
+      "port": 8001
+    }
+  },
+  "blockchain": {
+    "datadir": "/data/blockchain",
+    "genesis": {
+      "chainId": 1337,
+      "difficulty": "0x20000",
+      "gasLimit": "0x8000000",
+      "alloc": {}
+    },
+    "consensus": {
+      "type": "poa",
+      "period": 5,
+      "epoch": 30000
+    }
+  },
+  "federation": {
+    "enabled": true,
+    "resources": {
+      "compute": {
+        "enabled": true,
+        "cores": 2,
+        "pricePerHour": 0.01
+      },
+      "storage": {
+        "enabled": true,
+        "capacity": 53687091200,
+        "pricePerGB": 0.001
+      },
+      "bandwidth": {
+        "enabled": true,
+        "capacity": 1073741824,
+        "pricePerGB": 0.0001
+      }
+    }
+  },
+  "ipfs": {
+    "enabled": true,
+    "apiEndpoint": "http://ipfs-node-2:5001",
+    "gatewayEndpoint": "http://85.187.128.14:8081"
+  },
+  "database": {
+    "type": "supabase",
+    "syncEnabled": true
+  },
+  "logging": {
+    "level": "info",
+    "file": "/data/logs/node.log"
+  }
+}

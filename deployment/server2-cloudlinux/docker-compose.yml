@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  # HashBurst Main Network Node 2
+  hashburst-node-2:
+    image: hashburst/node:latest
+    container_name: hashburst-mainnet-node-2
+    restart: unless-stopped
+    ports:
+      - "8003:8002"    # RPC API (different external port)
+      - "30304:30303"  # P2P (different external port)
+      - "8004:8001"    # Backend API
+    volumes:
+      - ./node2-data:/data
+      - ./node2-config.json:/config/node-config.json
+    environment:
+      - NODE_NAME=hashburst-mainnet-2
+      - NODE_TYPE=validator
+      - NETWORK=mainnet
+      - RPC_HOST=0.0.0.0
+      - RPC_PORT=8002
+      - P2P_HOST=0.0.0.0
+      - P2P_PORT=30303
+      - EXTERNAL_IP=85.187.128.14
+      - EXTERNAL_PORT=30304
+      - BOOTSTRAP_NODES=31.25.11.195:30303,85.187.128.14:30304,85.187.128.14:30305
+    networks:
+      - hashburst-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # HashBurst Main Network Node 3
+  hashburst-node-3:
+    image: hashburst/node:latest
+    container_name: hashburst-mainnet-node-3
+    restart: unless-stopped
+    ports:
+      - "8005:8002"    # RPC API
+      - "30305:30303"  # P2P
+      - "8006:8001"    # Backend API
+    volumes:
+      - ./node3-data:/data
+      - ./node3-config.json:/config/node-config.json
+    environment:
+      - NODE_NAME=hashburst-mainnet-3
+      - NODE_TYPE=validator
+      - NETWORK=mainnet
+      - RPC_HOST=0.0.0.0
+      - RPC_PORT=8002
+      - P2P_HOST=0.0.0.0
+      - P2P_PORT=30303
+      - EXTERNAL_IP=85.187.128.14
+      - EXTERNAL_PORT=30305
+      - BOOTSTRAP_NODES=31.25.11.195:30303,85.187.128.14:30304,85.187.128.14:30305
+    networks:
+      - hashburst-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # IPFS Node 2
+  ipfs-node-2:
+    image: ipfs/kubo:latest
+    container_name: ipfs-mainnet-node-2
+    restart: unless-stopped
+    ports:
+      - "8081:8080"    # Gateway
+      - "5002:5001"    # API
+      - "4002:4001"    # Swarm
+    volumes:
+      - ./ipfs2-data:/data/ipfs
+      - ./ipfs2-config:/config
+    environment:
+      - IPFS_PROFILE=server
+      - IPFS_PATH=/data/ipfs
+    networks:
+      - hashburst-network
+    command: >
+      sh -c "ipfs init --profile=server || true &&
+             ipfs config Addresses.Gateway /ip4/0.0.0.0/tcp/8080 &&
+             ipfs config Addresses.API /ip4/0.0.0.0/tcp/5001 &&
+             ipfs config --json API.HTTPHeaders.Access-Control-Allow-Origin '[\"*\"]' &&
+             ipfs config --json API.HTTPHeaders.Access-Control-Allow-Methods '[\"GET\", \"POST\", \"PUT\"]' &&
+             ipfs bootstrap add /ip4/31.25.11.195/tcp/4001/p2p/12D3KooWNodeId1 &&
+             ipfs daemon --migrate=true"
+
+networks:
+  hashburst-network:
+    driver: bridge
