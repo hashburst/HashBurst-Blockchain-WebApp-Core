@@ -14,7 +14,7 @@ Complete guide to deploy and run the HashBurst mainnet across your two servers.
 - **Nodes**: 2 HashBurst Nodes + 1 IPFS Node
 - **Role**: Additional validators and redundancy
 
-## ⚡ Quick Start (5 Steps)
+## Quick Start (5 Steps)
 
 ### Deploy Server 1 (5 minutes)
 
