@@ -1,728 +1,480 @@
-import { useState, useEffect } from 'react';
-import { Wallet, Plus, Download, Star, Copy, Check, Loader2, Globe, CheckCircle, XCircle, Link as LinkIcon, RefreshCw, Shield } from 'lucide-react';
-import { walletService, Wallet as WalletType } from '../services/wallet';
-import {
-  registerName,
-  checkNameAvailability,
-  getNamesByWallet,
-  validateName,
-  NameRecord,
-} from '../services/name-service';
-import {
-  connectMetaMask,
-  connectTrustWallet,
-  connectTronLink,
-  detectMetaMask,
-  detectTrustWallet,
-  detectTronLink,
-  getExternalWallets,
-  saveExternalWallet,
-  disconnectExternalWallet,
-  getMetaMaskBalance,
-  getTronBalance,
-  getNetworkName,
-  getWalletIcon,
-  ExternalWalletConnection,
-  ExternalWalletType,
-} from '../services/external-wallets';
-import { ledgerService, saveLedgerWallet } from '../services/ledger-wallet';
-import { supabase } from '../lib/supabase';
+/**
+ * src/components/WalletManager.tsx
+ *
+ * Gestione wallet completamente locale.
+ * Le chiavi private non escono mai dal browser.
+ */
 
-export function WalletManager() {
-  const [wallets, setWallets] = useState<WalletType[]>([]);
-  const [externalWallets, setExternalWallets] = useState<ExternalWalletConnection[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [showCreate, setShowCreate] = useState(false);
-  const [showConnectExternal, setShowConnectExternal] = useState(false);
-  const [walletName, setWalletName] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
-  const [nameRecords, setNameRecords] = useState<Record<string, NameRecord[]>>({});
-  const [ensName, setEnsName] = useState('');
-  const [hbcName, setHbcName] = useState('');
-  const [ensAvailable, setEnsAvailable] = useState<boolean | null>(null);
-  const [hbcAvailable, setHbcAvailable] = useState<boolean | null>(null);
-  const [checkingEns, setCheckingEns] = useState(false);
-  const [checkingHbc, setCheckingHbc] = useState(false);
-  const [activeTab, setActiveTab] = useState<'hashburst' | 'external'>('hashburst');
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  createWallet,
+  getAllWallets,
+  deleteWallet,
+  renameWallet,
+  unlockWallet,
+  exportWalletToFile,
+  importWalletFromFile,
+  changePassword,
+  checkPasswordStrength,
+  type StoredWallet,
+} from '../services/wallet';
+import { hashburstClient } from '../services/hashburst';
 
-  useEffect(() => {
-    loadWallets();
+// ─── Tipi locali ──────────────────────────────────────────────────────────────
+
+interface WalletManagerProps {
+  onWalletSelect?: (wallet: StoredWallet) => void;
+}
+
+type Modal =
+  | { type: 'none' }
+  | { type: 'create' }
+  | { type: 'import_key' }
+  | { type: 'import_file' }
+  | { type: 'unlock';    walletId: string }
+  | { type: 'delete';    wallet: StoredWallet }
+  | { type: 'rename';    wallet: StoredWallet }
+  | { type: 'export';    wallet: StoredWallet }
+  | { type: 'change_pwd'; walletId: string }
+  | { type: 'show_key';  privateKey: string; address: string };
+
+// ─── Componente ───────────────────────────────────────────────────────────────
+
+export function WalletManager({ onWalletSelect }: WalletManagerProps) {
+
+  const [wallets,       setWallets]       = useState<StoredWallet[]>([]);
+  const [modal,         setModal]         = useState<Modal>({ type: 'none' });
+  const [loading,       setLoading]       = useState(false);
+  const [error,         setError]         = useState('');
+  const [success,       setSuccess]       = useState('');
+
+  // Campi form
+  const [name,          setName]          = useState('');
+  const [password,      setPassword]      = useState('');
+  const [password2,     setPassword2]     = useState('');
+  const [oldPassword,   setOldPassword]   = useState('');
+  const [privateKeyIn,  setPrivateKeyIn]  = useState('');
+  const [fileContent,   setFileContent]   = useState('');
+  const [newName,       setNewName]       = useState('');
+
+  const reset = () => {
+    setError(''); setSuccess(''); setName(''); setPassword('');
+    setPassword2(''); setOldPassword(''); setPrivateKeyIn('');
+    setFileContent(''); setNewName('');
+  };
+
+  const close = () => { setModal({ type: 'none' }); reset(); };
+
+  const load = useCallback(async () => {
+    const ws = await getAllWallets();
+    setWallets(ws);
+    // Aggiorna i balance in background
+    ws.forEach(async (w) => {
+      try {
+        const bal = await hashburstClient.getBalance(w.address);
+        setWallets(prev => prev.map(p =>
+          p.id === w.id ? { ...p, balance: bal.balance } : p
+        ));
+      } catch { /* nodo offline — usa cache */ }
+    });
   }, []);
 
-  const loadWallets = async () => {
+  useEffect(() => { load(); }, [load]);
+
+  const showMsg = (msg: string, isError = false) => {
+    if (isError) setError(msg); else setSuccess(msg);
+    setTimeout(() => { setError(''); setSuccess(''); }, 4000);
+  };
+
+  // ─── Azioni ─────────────────────────────────────────────────────────────────
+
+  const handleCreate = async () => {
+    if (!name.trim()) return setError('Inserisci un nome per il wallet');
+    if (password !== password2) return setError('Le password non coincidono');
     setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const [userWallets, extWallets] = await Promise.all([
-          walletService.getUserWallets(user.id),
-          getExternalWallets(user.id),
-        ]);
-
-        setWallets(userWallets);
-        setExternalWallets(extWallets);
-
-        const records: Record<string, NameRecord[]> = {};
-        for (const wallet of userWallets) {
-          try {
-            const names = await getNamesByWallet(wallet.id);
-            records[wallet.id] = names;
-          } catch (error) {
-            console.error(`Failed to load names for wallet ${wallet.id}:`, error);
-            records[wallet.id] = [];
-          }
-        }
-        setNameRecords(records);
-      }
-    } catch (error) {
-      console.error('Failed to load wallets:', error);
-    } finally {
-      setLoading(false);
-    }
+      const { wallet, privateKeyHex } = await createWallet(name, password);
+      await load();
+      close();
+      setModal({ type: 'show_key', privateKey: privateKeyHex, address: wallet.address });
+      showMsg('Wallet creato! Salva la chiave privata in un posto sicuro.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Errore creazione');
+    } finally { setLoading(false); }
   };
 
-  const handleConnectMetaMask = async () => {
-    setConnecting(true);
+  const handleUnlock = async (walletId: string) => {
+    setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        alert('Please sign in first');
-        return;
-      }
-
-      const { address, chainId } = await connectMetaMask();
-      await saveExternalWallet(user.id, 'metamask', address, chainId);
-
-      await loadWallets();
-      setShowConnectExternal(false);
-      alert('MetaMask connected successfully!');
-    } catch (error: any) {
-      console.error('Failed to connect MetaMask:', error);
-      alert(error.message || 'Failed to connect MetaMask');
-    } finally {
-      setConnecting(false);
-    }
+      const key = await unlockWallet(walletId, password);
+      const wallet = wallets.find(w => w.id === walletId)!;
+      close();
+      setModal({ type: 'show_key', privateKey: key, address: wallet.address });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Password errata');
+    } finally { setLoading(false); }
   };
 
-  const handleConnectTrustWallet = async () => {
-    setConnecting(true);
+  const handleDelete = async (wallet: StoredWallet) => {
+    setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        alert('Please sign in first');
-        return;
-      }
-
-      const { address, chainId } = await connectTrustWallet();
-      await saveExternalWallet(user.id, 'trust', address, chainId);
-
-      await loadWallets();
-      setShowConnectExternal(false);
-      alert('Trust Wallet connected successfully!');
-    } catch (error: any) {
-      console.error('Failed to connect Trust Wallet:', error);
-      alert(error.message || 'Failed to connect Trust Wallet');
-    } finally {
-      setConnecting(false);
-    }
+      // Verifica password prima di eliminare
+      await unlockWallet(wallet.id, password);
+      await deleteWallet(wallet.id);
+      await load();
+      close();
+      showMsg('Wallet eliminato');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Password errata');
+    } finally { setLoading(false); }
   };
 
-  const handleConnectTronLink = async () => {
-    setConnecting(true);
+  const handleRename = async (walletId: string) => {
+    if (!newName.trim()) return setError('Inserisci un nuovo nome');
+    setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        alert('Please sign in first');
-        return;
-      }
-
-      const { address, network } = await connectTronLink();
-      await saveExternalWallet(user.id, 'tronlink', address, undefined, network);
-
-      await loadWallets();
-      setShowConnectExternal(false);
-      alert('TronLink connected successfully!');
-    } catch (error: any) {
-      console.error('Failed to connect TronLink:', error);
-      alert(error.message || 'Failed to connect TronLink');
-    } finally {
-      setConnecting(false);
-    }
+      await renameWallet(walletId, newName);
+      await load();
+      close();
+      showMsg('Wallet rinominato');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Errore');
+    } finally { setLoading(false); }
   };
 
-  const handleConnectLedger = async () => {
-    setConnecting(true);
+  const handleExport = async (wallet: StoredWallet) => {
+    setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        alert('Please sign in first');
-        return;
-      }
-
-      const hasPermission = await ledgerService.requestPermission();
-      if (!hasPermission) {
-        throw new Error('Ledger permission denied');
-      }
-
-      await ledgerService.connect();
-      const address = await ledgerService.getEthereumAddress();
-
-      await saveLedgerWallet(user.id, address, "m/44'/60'/0'/0/0", 'ethereum');
-
-      await loadWallets();
-      setShowConnectExternal(false);
-      alert('Ledger connected successfully!');
-    } catch (error: any) {
-      console.error('Failed to connect Ledger:', error);
-      alert(error.message || 'Failed to connect Ledger');
-    } finally {
-      setConnecting(false);
-      await ledgerService.disconnect();
-    }
+      await unlockWallet(wallet.id, password); // verifica password
+      exportWalletToFile(wallet);
+      close();
+      showMsg('File wallet scaricato');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Password errata');
+    } finally { setLoading(false); }
   };
 
-  const handleDisconnectExternal = async (walletId: string) => {
+  const handleImportFile = async () => {
+    if (!fileContent) return setError('Seleziona un file wallet');
+    setLoading(true);
     try {
-      await disconnectExternalWallet(walletId);
-      await loadWallets();
-    } catch (error) {
-      console.error('Failed to disconnect wallet:', error);
-      alert('Failed to disconnect wallet');
-    }
+      await importWalletFromFile(fileContent, password);
+      await load();
+      close();
+      showMsg('Wallet importato con successo');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'File non valido o password errata');
+    } finally { setLoading(false); }
   };
 
-  const handleCreateWallet = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!walletName.trim()) return;
-
-    setCreating(true);
+  const handleChangePwd = async (walletId: string) => {
+    if (password !== password2) return setError('Le nuove password non coincidono');
+    setLoading(true);
     try {
-      const newWallet = await walletService.generateWallet(walletName);
-
-      if (ensName && ensAvailable) {
-        try {
-          await registerName({
-            walletId: newWallet.id,
-            name: ensName,
-            domain: 'eth',
-            address: newWallet.wallet_address,
-            isPrimary: !hbcName,
-          });
-        } catch (error) {
-          console.error('Failed to register ENS name:', error);
-        }
-      }
-
-      if (hbcName && hbcAvailable) {
-        try {
-          await registerName({
-            walletId: newWallet.id,
-            name: hbcName,
-            domain: 'hbc',
-            address: newWallet.wallet_address,
-            isPrimary: true,
-          });
-        } catch (error) {
-          console.error('Failed to register .hbc name:', error);
-        }
-      }
-
-      setWalletName('');
-      setEnsName('');
-      setHbcName('');
-      setEnsAvailable(null);
-      setHbcAvailable(null);
-      setShowCreate(false);
-      await loadWallets();
-    } catch (error) {
-      console.error('Failed to create wallet:', error);
-      alert('Failed to create wallet. Please try again.');
-    } finally {
-      setCreating(false);
-    }
+      await changePassword(walletId, oldPassword, password);
+      close();
+      showMsg('Password aggiornata');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Errore');
+    } finally { setLoading(false); }
   };
 
-  const checkEnsName = async (name: string) => {
-    if (!name) {
-      setEnsAvailable(null);
-      return;
-    }
+  const pwdStrength = checkPasswordStrength(password);
 
-    const validation = validateName(name);
-    if (!validation.valid) {
-      setEnsAvailable(false);
-      return;
-    }
-
-    setCheckingEns(true);
-    try {
-      const available = await checkNameAvailability(name, 'eth');
-      setEnsAvailable(available);
-    } catch (error) {
-      console.error('Failed to check ENS availability:', error);
-      setEnsAvailable(null);
-    } finally {
-      setCheckingEns(false);
-    }
-  };
-
-  const checkHbcName = async (name: string) => {
-    if (!name) {
-      setHbcAvailable(null);
-      return;
-    }
-
-    const validation = validateName(name);
-    if (!validation.valid) {
-      setHbcAvailable(false);
-      return;
-    }
-
-    setCheckingHbc(true);
-    try {
-      const available = await checkNameAvailability(name, 'hbc');
-      setHbcAvailable(available);
-    } catch (error) {
-      console.error('Failed to check .hbc availability:', error);
-      setHbcAvailable(null);
-    } finally {
-      setCheckingHbc(false);
-    }
-  };
-
-  const handleCopyAddress = (address: string) => {
-    navigator.clipboard.writeText(address);
-    setCopiedAddress(address);
-    setTimeout(() => setCopiedAddress(null), 2000);
-  };
-
-  const handleDownloadBackup = (wallet: WalletType) => {
-    walletService.downloadWalletBackup(wallet);
-  };
-
-  if (loading) {
-    return (
-      <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-        </div>
-      </div>
-    );
-  }
+  // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-      <div className="p-6 border-b border-gray-200">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900">My Wallets</h2>
-            <p className="text-sm text-gray-500 mt-1">Manage your HashBurst and external wallets</p>
-          </div>
-        </div>
+    <div style={{ padding: '20px', fontFamily: 'monospace', maxWidth: '900px' }}>
 
-        <div className="flex gap-2">
-          <button
-            onClick={() => setActiveTab('hashburst')}
-            className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
-              activeTab === 'hashburst'
-                ? 'bg-blue-500 text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            <div className="flex items-center justify-center gap-2">
-              <Wallet className="w-4 h-4" />
-              HashBurst Wallets
-            </div>
-          </button>
-          <button
-            onClick={() => setActiveTab('external')}
-            className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
-              activeTab === 'external'
-                ? 'bg-blue-500 text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            <div className="flex items-center justify-center gap-2">
-              <LinkIcon className="w-4 h-4" />
-              External Wallets
-            </div>
-          </button>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <h2 style={{ margin: 0, color: '#2E86C1' }}>
+          🔐 Wallet Manager — Locale
+        </h2>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button onClick={() => { reset(); setModal({ type: 'create' }); }}
+            style={btnStyle('#27AE60')}>+ Nuovo Wallet</button>
+          <button onClick={() => { reset(); setModal({ type: 'import_file' }); }}
+            style={btnStyle('#8E44AD')}>📂 Importa File</button>
         </div>
       </div>
 
-      {activeTab === 'hashburst' && (
-        <>
-          <div className="p-4 border-b border-gray-200">
-            <button
-              onClick={() => setShowCreate(!showCreate)}
-              className="w-full px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors flex items-center justify-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              Create HashBurst Wallet
-            </button>
-          </div>
+      {/* Messaggi */}
+      {error   && <div style={alertStyle('#e74c3c')}>{error}</div>}
+      {success && <div style={alertStyle('#27ae60')}>{success}</div>}
 
-      {showCreate && (
-        <div className="p-6 bg-gray-50 border-b border-gray-200">
-          <form onSubmit={handleCreateWallet} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Wallet Name</label>
-              <input
-                type="text"
-                value={walletName}
-                onChange={(e) => setWalletName(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="My HashBurst Wallet"
-                required
-              />
-            </div>
-
-            <div className="border-t border-gray-200 pt-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Globe className="w-5 h-5 text-gray-600" />
-                <h3 className="text-sm font-medium text-gray-700">Name Service (Optional)</h3>
-              </div>
-              <p className="text-xs text-gray-500 mb-4">
-                Register a human-readable name for your wallet address
-              </p>
-
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    ENS Name (Ethereum Name Service)
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={ensName}
-                      onChange={(e) => {
-                        setEnsName(e.target.value);
-                        checkEnsName(e.target.value);
-                      }}
-                      className="w-full px-4 py-2 pr-24 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="myname"
-                    />
-                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                      <span className="text-sm text-gray-500">.eth</span>
-                      {checkingEns && <Loader2 className="w-4 h-4 animate-spin text-blue-500" />}
-                      {ensAvailable === true && <CheckCircle className="w-4 h-4 text-green-500" />}
-                      {ensAvailable === false && <XCircle className="w-4 h-4 text-red-500" />}
-                    </div>
-                  </div>
-                  {ensAvailable === false && (
-                    <p className="text-xs text-red-500 mt-1">This name is not available</p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    HashBurst Name (Native Format)
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={hbcName}
-                      onChange={(e) => {
-                        setHbcName(e.target.value);
-                        checkHbcName(e.target.value);
-                      }}
-                      className="w-full px-4 py-2 pr-24 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="myname"
-                    />
-                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                      <span className="text-sm text-gray-500">.hbc</span>
-                      {checkingHbc && <Loader2 className="w-4 h-4 animate-spin text-blue-500" />}
-                      {hbcAvailable === true && <CheckCircle className="w-4 h-4 text-green-500" />}
-                      {hbcAvailable === false && <XCircle className="w-4 h-4 text-red-500" />}
-                    </div>
-                  </div>
-                  {hbcAvailable === false && (
-                    <p className="text-xs text-red-500 mt-1">This name is not available</p>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <button
-                type="submit"
-                disabled={creating || !walletName.trim()}
-                className="flex-1 py-2 px-4 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-              >
-                {creating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  <>
-                    <Wallet className="w-4 h-4" />
-                    Generate Wallet
-                  </>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowCreate(false);
-                  setEnsName('');
-                  setHbcName('');
-                  setEnsAvailable(null);
-                  setHbcAvailable(null);
-                }}
-                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      <div className="divide-y divide-gray-200">
-        {wallets.length === 0 ? (
-          <div className="p-12 text-center">
-            <Wallet className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-500 mb-2">No wallets yet</p>
-            <p className="text-sm text-gray-400">Create your first wallet to get started</p>
-          </div>
-        ) : (
-          wallets.map((wallet) => (
-            <div key={wallet.id} className="p-4 hover:bg-gray-50 transition-colors">
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-cyan-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                  <Wallet className="w-6 h-6 text-white" />
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between gap-4 mb-2">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-gray-900">{wallet.wallet_name}</h3>
-                        {wallet.is_primary && (
-                          <span className="flex items-center gap-1 px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs font-medium rounded">
-                            <Star className="w-3 h-3" />
-                            Primary
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <p className="text-sm text-gray-600 font-mono">{wallet.wallet_address}</p>
-                        <button
-                          onClick={() => handleCopyAddress(wallet.wallet_address)}
-                          className="p-1 hover:bg-gray-200 rounded transition-colors"
-                          title="Copy address"
-                        >
-                          {copiedAddress === wallet.wallet_address ? (
-                            <Check className="w-4 h-4 text-green-500" />
-                          ) : (
-                            <Copy className="w-4 h-4 text-gray-400" />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-2xl font-bold text-gray-900">{wallet.balance.toFixed(2)}</div>
-                      <div className="text-xs text-gray-500">HBT</div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 mt-3">
-                    {nameRecords[wallet.id] && nameRecords[wallet.id].length > 0 && (
-                      <div className="flex flex-wrap gap-2">
-                        {nameRecords[wallet.id].map((record) => (
-                          <div
-                            key={record.id}
-                            className={`px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1 ${
-                              record.domain === 'eth'
-                                ? 'bg-purple-100 text-purple-700 border border-purple-200'
-                                : 'bg-green-100 text-green-700 border border-green-200'
-                            }`}
-                          >
-                            <Globe className="w-3 h-3" />
-                            {record.name}
-                            {record.isPrimary && <Star className="w-3 h-3 fill-current" />}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleDownloadBackup(wallet)}
-                        className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-1.5 text-sm"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        Backup
-                      </button>
-                      <div className="text-xs text-gray-500">
-                        Created {new Date(wallet.created_at).toLocaleDateString()}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))
-        )}
+      {/* Avviso sicurezza */}
+      <div style={{ background: '#1A3A5C', color: '#AED6F1', padding: '12px', borderRadius: '6px', marginBottom: '16px', fontSize: '13px' }}>
+        🛡️ <strong>Sicurezza locale:</strong> le chiavi private sono cifrate con AES-256-GCM
+        e salvate solo nel tuo browser (IndexedDB). Non escono mai dal tuo computer.
       </div>
-        </>
-      )}
 
-      {activeTab === 'external' && (
-        <>
-          <div className="p-4 border-b border-gray-200">
-            <button
-              onClick={() => setShowConnectExternal(!showConnectExternal)}
-              className="w-full px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors flex items-center justify-center gap-2"
-            >
-              <LinkIcon className="w-4 h-4" />
-              Connect External Wallet
+      {/* Lista wallet */}
+      {wallets.length === 0
+        ? <p style={{ color: '#808B96' }}>Nessun wallet — creane uno per iniziare.</p>
+        : wallets.map(w => (
+          <WalletCard key={w.id} wallet={w}
+            onUnlock  ={() => { reset(); setModal({ type: 'unlock',     walletId: w.id }); }}
+            onExport  ={() => { reset(); setModal({ type: 'export',     wallet: w }); }}
+            onDelete  ={() => { reset(); setModal({ type: 'delete',     wallet: w }); }}
+            onRename  ={() => { reset(); setNewName(w.name); setModal({ type: 'rename', wallet: w }); }}
+            onChangePwd={() => { reset(); setModal({ type: 'change_pwd', walletId: w.id }); }}
+            onSelect  ={() => onWalletSelect?.(w)}
+          />
+        ))
+      }
+
+      {/* ─── Modal Crea ─────────────────────────────────────────────────── */}
+      {modal.type === 'create' && (
+        <ModalOverlay onClose={close} title="Crea Nuovo Wallet">
+          <Field label="Nome wallet" value={name} onChange={setName} placeholder="Es. Wallet Principale" />
+          <Field label="Password" value={password} onChange={setPassword} type="password" />
+          <PasswordBar strength={pwdStrength} />
+          <Field label="Conferma password" value={password2} onChange={setPassword2} type="password" />
+          {error && <Err>{error}</Err>}
+          <p style={{ fontSize: '12px', color: '#AED6F1', marginTop: '8px' }}>
+            ⚠️ La password cifra la chiave privata. Se la dimentichi,
+            non potrai più accedere ai fondi senza il backup della chiave.
+          </p>
+          <Actions>
+            <button onClick={handleCreate} disabled={loading} style={btnStyle('#27AE60')}>
+              {loading ? '...' : '✓ Crea'}
             </button>
-          </div>
-
-          {showConnectExternal && (
-            <div className="p-6 bg-gray-50 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Choose Wallet Type</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <button
-                  onClick={handleConnectMetaMask}
-                  disabled={connecting}
-                  className="p-6 border-2 border-gray-200 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <div className="text-3xl mb-3">🦊</div>
-                  <div className="font-semibold text-gray-900 mb-1">MetaMask</div>
-                  <div className="text-sm text-gray-600">Connect your MetaMask wallet for Ethereum and EVM chains</div>
-                </button>
-
-                <button
-                  onClick={handleConnectTrustWallet}
-                  disabled={connecting}
-                  className="p-6 border-2 border-gray-200 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <div className="text-3xl mb-3">🛡️</div>
-                  <div className="font-semibold text-gray-900 mb-1">Trust Wallet</div>
-                  <div className="text-sm text-gray-600">Connect your Trust Wallet for multi-chain support</div>
-                </button>
-
-                <button
-                  onClick={handleConnectTronLink}
-                  disabled={connecting}
-                  className="p-6 border-2 border-gray-200 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <div className="text-3xl mb-3">⚡</div>
-                  <div className="font-semibold text-gray-900 mb-1">TronLink</div>
-                  <div className="text-sm text-gray-600">Connect your TronLink wallet for Tron blockchain</div>
-                </button>
-
-                <button
-                  onClick={handleConnectLedger}
-                  disabled={connecting}
-                  className="p-6 border-2 border-gray-200 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <div className="text-3xl mb-3">🔐</div>
-                  <div className="font-semibold text-gray-900 mb-1">Ledger Hardware</div>
-                  <div className="text-sm text-gray-600">Connect your Ledger hardware wallet via USB</div>
-                </button>
-              </div>
-
-              {connecting && (
-                <div className="mt-4 flex items-center justify-center gap-2 text-blue-600">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Connecting wallet...</span>
-                </div>
-              )}
-
-              <button
-                onClick={() => setShowConnectExternal(false)}
-                className="mt-4 w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-
-          <div className="divide-y divide-gray-200">
-            {externalWallets.length === 0 ? (
-              <div className="p-12 text-center">
-                <LinkIcon className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-                <p className="text-gray-500 mb-2">No external wallets connected</p>
-                <p className="text-sm text-gray-400">Connect MetaMask, Trust Wallet, TronLink, or Ledger</p>
-              </div>
-            ) : (
-              externalWallets.map((wallet) => (
-                <div key={wallet.id} className="p-4 hover:bg-gray-50 transition-colors">
-                  <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-red-600 rounded-lg flex items-center justify-center flex-shrink-0 text-2xl">
-                      {getWalletIcon(wallet.wallet_type)}
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-4 mb-2">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="font-semibold text-gray-900">{wallet.wallet_name}</h3>
-                            {wallet.is_connected && (
-                              <span className="flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs font-medium rounded">
-                                <CheckCircle className="w-3 h-3" />
-                                Connected
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 mt-1">
-                            <p className="text-sm text-gray-600 font-mono">{wallet.wallet_address.slice(0, 12)}...{wallet.wallet_address.slice(-8)}</p>
-                            <button
-                              onClick={() => handleCopyAddress(wallet.wallet_address)}
-                              className="p-1 hover:bg-gray-200 rounded transition-colors"
-                              title="Copy address"
-                            >
-                              {copiedAddress === wallet.wallet_address ? (
-                                <Check className="w-4 h-4 text-green-500" />
-                              ) : (
-                                <Copy className="w-4 h-4 text-gray-400" />
-                              )}
-                            </button>
-                          </div>
-                          {wallet.chain_id && (
-                            <p className="text-xs text-gray-500 mt-1">
-                              {getNetworkName(wallet.chain_id)}
-                            </p>
-                          )}
-                          {wallet.network && !wallet.chain_id && (
-                            <p className="text-xs text-gray-500 mt-1">
-                              {wallet.network}
-                            </p>
-                          )}
-                        </div>
-                        {wallet.balance !== undefined && wallet.balance !== null && (
-                          <div className="text-right">
-                            <div className="text-lg font-bold text-gray-900">{wallet.balance.toFixed(4)}</div>
-                            <div className="text-xs text-gray-500">Balance</div>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-2 mt-3">
-                        <button
-                          onClick={() => handleDisconnectExternal(wallet.id)}
-                          className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors flex items-center gap-1.5 text-sm"
-                        >
-                          <XCircle className="w-3.5 h-3.5" />
-                          Disconnect
-                        </button>
-                        <div className="text-xs text-gray-500">
-                          Last connected {new Date(wallet.last_connected).toLocaleDateString()}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </>
+            <button onClick={close} style={btnStyle('#7F8C8D')}>Annulla</button>
+          </Actions>
+        </ModalOverlay>
       )}
+
+      {/* ─── Modal Mostra Chiave ────────────────────────────────────────── */}
+      {modal.type === 'show_key' && (
+        <ModalOverlay onClose={close} title="⚠️ Chiave Privata — Salva Subito">
+          <p style={{ color: '#F39C12' }}>
+            Questa è l'<strong>unica volta</strong> che vedi la chiave privata in chiaro.
+            Salvala in un posto sicuro offline (carta, password manager locale).
+          </p>
+          <div style={{ background: '#0D1117', padding: '12px', borderRadius: '6px', wordBreak: 'break-all', fontFamily: 'monospace', fontSize: '13px', color: '#2ECC71', border: '1px solid #27AE60' }}>
+            <strong>Indirizzo:</strong><br />
+            {modal.address}
+            <br /><br />
+            <strong>Chiave Privata:</strong><br />
+            {modal.privateKey}
+          </div>
+          <p style={{ fontSize: '12px', color: '#E74C3C', marginTop: '8px' }}>
+            🔴 Non condividere mai questa chiave. Chi la possiede controlla i fondi.
+          </p>
+          <Actions>
+            <button onClick={() => {
+              navigator.clipboard.writeText(modal.privateKey);
+              showMsg('Copiata negli appunti (cancella dopo aver salvato)');
+            }} style={btnStyle('#F39C12')}>📋 Copia</button>
+            <button onClick={close} style={btnStyle('#27AE60')}>✓ Ho salvato</button>
+          </Actions>
+        </ModalOverlay>
+      )}
+
+      {/* ─── Modal Sblocca ──────────────────────────────────────────────── */}
+      {modal.type === 'unlock' && (
+        <ModalOverlay onClose={close} title="Sblocca Wallet">
+          <Field label="Password" value={password} onChange={setPassword} type="password" />
+          {error && <Err>{error}</Err>}
+          <Actions>
+            <button onClick={() => handleUnlock(modal.walletId)} disabled={loading}
+              style={btnStyle('#2E86C1')}>{loading ? '...' : '🔓 Sblocca'}</button>
+            <button onClick={close} style={btnStyle('#7F8C8D')}>Annulla</button>
+          </Actions>
+        </ModalOverlay>
+      )}
+
+      {/* ─── Modal Esporta ──────────────────────────────────────────────── */}
+      {modal.type === 'export' && (
+        <ModalOverlay onClose={close} title="Esporta Wallet">
+          <p style={{ color: '#AED6F1' }}>
+            Il file esportato contiene la chiave privata cifrata.
+            Serve la password per usarlo.
+          </p>
+          <Field label="Conferma password" value={password} onChange={setPassword} type="password" />
+          {error && <Err>{error}</Err>}
+          <Actions>
+            <button onClick={() => handleExport(modal.wallet)} disabled={loading}
+              style={btnStyle('#8E44AD')}>{loading ? '...' : '💾 Scarica file'}</button>
+            <button onClick={close} style={btnStyle('#7F8C8D')}>Annulla</button>
+          </Actions>
+        </ModalOverlay>
+      )}
+
+      {/* ─── Modal Importa File ─────────────────────────────────────────── */}
+      {modal.type === 'import_file' && (
+        <ModalOverlay onClose={close} title="Importa Wallet da File">
+          <input type="file" accept=".json"
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              setFileContent(await f.text());
+            }}
+            style={{ marginBottom: '12px', color: '#AED6F1' }}
+          />
+          <Field label="Password del wallet" value={password} onChange={setPassword} type="password" />
+          {error && <Err>{error}</Err>}
+          <Actions>
+            <button onClick={handleImportFile} disabled={loading || !fileContent}
+              style={btnStyle('#8E44AD')}>{loading ? '...' : '📂 Importa'}</button>
+            <button onClick={close} style={btnStyle('#7F8C8D')}>Annulla</button>
+          </Actions>
+        </ModalOverlay>
+      )}
+
+      {/* ─── Modal Elimina ──────────────────────────────────────────────── */}
+      {modal.type === 'delete' && (
+        <ModalOverlay onClose={close} title="🗑️ Elimina Wallet">
+          <p style={{ color: '#E74C3C' }}>
+            <strong>Attenzione:</strong> eliminare il wallet dal browser
+            non elimina i fondi dalla blockchain.
+            Assicurati di avere un backup della chiave privata.
+          </p>
+          <Field label="Conferma password" value={password} onChange={setPassword} type="password" />
+          {error && <Err>{error}</Err>}
+          <Actions>
+            <button onClick={() => handleDelete(modal.wallet)} disabled={loading}
+              style={btnStyle('#E74C3C')}>{loading ? '...' : '🗑️ Elimina'}</button>
+            <button onClick={close} style={btnStyle('#7F8C8D')}>Annulla</button>
+          </Actions>
+        </ModalOverlay>
+      )}
+
+      {/* ─── Modal Rinomina ─────────────────────────────────────────────── */}
+      {modal.type === 'rename' && (
+        <ModalOverlay onClose={close} title="Rinomina Wallet">
+          <Field label="Nuovo nome" value={newName} onChange={setNewName} />
+          {error && <Err>{error}</Err>}
+          <Actions>
+            <button onClick={() => handleRename(modal.wallet.id)} disabled={loading}
+              style={btnStyle('#2E86C1')}>{loading ? '...' : '✏️ Rinomina'}</button>
+            <button onClick={close} style={btnStyle('#7F8C8D')}>Annulla</button>
+          </Actions>
+        </ModalOverlay>
+      )}
+
+      {/* ─── Modal Cambia Password ──────────────────────────────────────── */}
+      {modal.type === 'change_pwd' && (
+        <ModalOverlay onClose={close} title="Cambia Password">
+          <Field label="Password attuale" value={oldPassword} onChange={setOldPassword} type="password" />
+          <Field label="Nuova password"   value={password}    onChange={setPassword}    type="password" />
+          <PasswordBar strength={pwdStrength} />
+          <Field label="Conferma nuova"   value={password2}   onChange={setPassword2}   type="password" />
+          {error && <Err>{error}</Err>}
+          <Actions>
+            <button onClick={() => handleChangePwd(modal.walletId)} disabled={loading}
+              style={btnStyle('#F39C12')}>{loading ? '...' : '🔑 Aggiorna'}</button>
+            <button onClick={close} style={btnStyle('#7F8C8D')}>Annulla</button>
+          </Actions>
+        </ModalOverlay>
+      )}
+
     </div>
   );
 }
+
+// ─── Sub-componenti ───────────────────────────────────────────────────────────
+
+function WalletCard({ wallet, onUnlock, onExport, onDelete, onRename, onChangePwd, onSelect }: {
+  wallet: StoredWallet;
+  onUnlock: () => void; onExport: () => void; onDelete: () => void;
+  onRename: () => void; onChangePwd: () => void; onSelect: () => void;
+}) {
+  return (
+    <div style={{ background: '#1A2634', border: '1px solid #2E86C1', borderRadius: '8px', padding: '16px', marginBottom: '12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <strong style={{ color: '#2E86C1', fontSize: '16px' }}>{wallet.name}</strong>
+          <div style={{ color: '#AED6F1', fontFamily: 'monospace', fontSize: '12px', marginTop: '4px' }}>
+            {wallet.address}
+          </div>
+          <div style={{ color: '#808B96', fontSize: '12px', marginTop: '4px' }}>
+            Saldo: <strong style={{ color: '#2ECC71' }}>{wallet.balance?.toFixed(4) ?? '—'} HBT</strong>
+            &nbsp;·&nbsp; Creato: {new Date(wallet.createdAt).toLocaleDateString('it-IT')}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button onClick={onSelect}    style={smallBtn('#1F6AA5')} title="Usa questo wallet">✓ Usa</button>
+          <button onClick={onUnlock}    style={smallBtn('#2E86C1')} title="Mostra chiave privata">🔓</button>
+          <button onClick={onExport}    style={smallBtn('#8E44AD')} title="Esporta backup">💾</button>
+          <button onClick={onRename}    style={smallBtn('#F39C12')} title="Rinomina">✏️</button>
+          <button onClick={onChangePwd} style={smallBtn('#E67E22')} title="Cambia password">🔑</button>
+          <button onClick={onDelete}    style={smallBtn('#E74C3C')} title="Elimina">🗑️</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModalOverlay({ children, onClose, title }: {
+  children: React.ReactNode; onClose: () => void; title: string;
+}) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+      <div style={{ background: '#1A2634', border: '1px solid #2E86C1', borderRadius: '10px', padding: '24px', width: '420px', maxWidth: '90vw', maxHeight: '90vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
+          <h3 style={{ margin: 0, color: '#2E86C1' }}>{title}</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#808B96', fontSize: '20px', cursor: 'pointer' }}>×</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, value, onChange, type = 'text', placeholder = '' }: {
+  label: string; value: string; onChange: (v: string) => void;
+  type?: string; placeholder?: string;
+}) {
+  return (
+    <div style={{ marginBottom: '12px' }}>
+      <label style={{ display: 'block', color: '#AED6F1', fontSize: '13px', marginBottom: '4px' }}>{label}</label>
+      <input type={type} value={value} onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        style={{ width: '100%', boxSizing: 'border-box', background: '#0D1117', border: '1px solid #2E86C1', borderRadius: '4px', padding: '8px 10px', color: '#ECF0F1', fontFamily: 'monospace', fontSize: '14px' }}
+      />
+    </div>
+  );
+}
+
+function PasswordBar({ strength }: { strength: ReturnType<typeof checkPasswordStrength> }) {
+  return (
+    <div style={{ marginBottom: '12px' }}>
+      <div style={{ height: '4px', background: '#2C3E50', borderRadius: '2px', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${(strength.score / 4) * 100}%`, background: strength.color, transition: 'width .3s, background .3s' }} />
+      </div>
+      <span style={{ fontSize: '11px', color: strength.color }}>{strength.label}</span>
+    </div>
+  );
+}
+
+function Actions({ children }: { children: React.ReactNode }) {
+  return <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>{children}</div>;
+}
+
+function Err({ children }: { children: React.ReactNode }) {
+  return <div style={{ color: '#E74C3C', fontSize: '13px', marginTop: '8px' }}>{children}</div>;
+}
+
+// ─── Stili ────────────────────────────────────────────────────────────────────
+
+function btnStyle(bg: string): React.CSSProperties {
+  return {
+    background: bg, color: '#fff', border: 'none', padding: '8px 14px',
+    borderRadius: '5px', cursor: 'pointer', fontFamily: 'monospace', fontSize: '13px',
+  };
+}
+
+function smallBtn(bg: string): React.CSSProperties {
+  return { ...btnStyle(bg), padding: '5px 9px', fontSize: '14px' };
+}
+
+function alertStyle(color: string): React.CSSProperties {
+  return {
+    background: color + '22', border: `1px solid ${color}`, color: color,
+    padding: '10px 14px', borderRadius: '6px', marginBottom: '12px', fontSize: '13px',
+  };
+}
+
+export default WalletManager;

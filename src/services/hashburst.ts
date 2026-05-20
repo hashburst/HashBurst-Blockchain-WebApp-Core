@@ -1,247 +1,215 @@
-const HASHBURST_API_URL = import.meta.env.VITE_HASHBURST_API_URL || 'http://localhost:8002';
+/**
+ * src/services/hashburst.ts  — versione aggiornata
+ *
+ * Usa config.ts come unica sorgente degli URL.
+ * Failover automatico tra tutti i nodi in NODE_LIST.
+ * Cache locale IndexedDB per funzionamento degradato offline.
+ */
 
-export interface BlockchainStatus {
-  block_height: number;
-  network_status: string;
-  total_transactions: number;
-  active_nodes: number;
-  tps: number;
+import { networkCache } from '../lib/localStore';
+import {
+  NODE_LIST,
+  IPFS_GATEWAY,
+  IPFS_API,
+  NODE_TIMEOUT_MS,
+  NODE_MAX_RETRIES,
+} from '../lib/config';
+
+// ── Tipi risposta nodo ────────────────────────────────────────────────────────
+
+export interface NodeStatus {
+  status:      'online' | 'offline';
+  blockHeight: number;
+  peers:       number;
+  version:     string;
+  chainId:     number;
+  tps:         number;
+  nodeId:      string;
 }
 
-export interface ContractDeployment {
+export interface Block {
+  number:       number;
+  hash:         string;
+  parentHash:   string;
+  timestamp:    number;
+  transactions: number;
+  miner:        string;
+  size:         number;
+}
+
+export interface Transaction {
+  hash:        string;
+  from:        string;
+  to:          string;
+  value:       string;
+  blockNumber: number;
+  timestamp:   number;
+  status:      'success' | 'failed' | 'pending';
+  gasUsed:     number;
+}
+
+export interface WalletBalance {
   address: string;
-  transaction_hash: string;
-  status: string;
+  balance: number;
+  symbol:  string;
+  txCount: number;
 }
 
-export interface TransactionResult {
-  transaction_hash: string;
-  status: string;
-  block_number: number;
-}
+// ── Client con failover su NODE_LIST ─────────────────────────────────────────
 
-class HashBurstService {
-  private baseUrl: string;
+class HashBurstClient {
 
-  constructor() {
-    this.baseUrl = HASHBURST_API_URL;
-  }
+  private async fetchWithFailover<T>(
+    path: string,
+    options?: RequestInit,
+    cacheKey?: string,
+    cacheTtl = 10
+  ): Promise<T> {
 
-  async getNetworkStatus(): Promise<BlockchainStatus> {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/status`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch network status');
+    // Cache locale prima di fare rete
+    if (cacheKey && !options?.method) {
+      const cached = await networkCache.get<T>(cacheKey);
+      if (cached !== null) return cached;
+    }
+
+    let lastError: Error | null = null;
+
+    for (const baseUrl of NODE_LIST) {
+      try {
+        const res = await fetch(`${baseUrl}${path}`, {
+          ...options,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(options?.headers ?? {}),
+          },
+          signal: AbortSignal.timeout(NODE_TIMEOUT_MS),
+        });
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const data = await res.json() as T;
+
+        if (cacheKey) {
+          await networkCache.set(cacheKey, data, cacheTtl);
+          // Salva anche versione stale (usata se tutti i nodi sono giù)
+          await networkCache.set(cacheKey + '_stale', data, cacheTtl * 100);
+        }
+
+        return data;
+
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        continue;
       }
-      return await response.json();
-    } catch (error) {
-      console.error('Error fetching network status:', error);
-      return {
-        block_height: 0,
-        network_status: 'disconnected',
-        total_transactions: 0,
-        active_nodes: 0,
-        tps: 0,
-      };
     }
-  }
 
-  async getContracts(): Promise<any[]> {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/contracts`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch contracts');
+    // Tutti i nodi offline — usa cache stale
+    if (cacheKey) {
+      const stale = await networkCache.get<T>(cacheKey + '_stale');
+      if (stale !== null) {
+        console.warn('[HashBurst] Tutti i nodi offline — uso cache stale:', cacheKey);
+        return stale;
       }
-      return await response.json();
-    } catch (error) {
-      console.error('Error fetching contracts:', error);
-      return [];
     }
+
+    throw lastError ?? new Error('Tutti i nodi HashBurst non raggiungibili');
   }
 
-  async deployContract(
-    bytecode: string,
-    abi: any[],
-    contractType: string,
-    creatorAddress: string
-  ): Promise<ContractDeployment> {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/contracts/deploy`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          bytecode,
-          abi,
-          contract_type: contractType,
-          creator: creatorAddress,
-        }),
-      });
+  // ── Status ───────────────────────────────────────────────────────────────────
 
-      if (!response.ok) {
-        throw new Error('Failed to deploy contract');
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Error deploying contract:', error);
-      throw error;
-    }
+  async getStatus(): Promise<NodeStatus> {
+    return this.fetchWithFailover<NodeStatus>('/status', undefined, 'node_status', 15);
   }
 
-  async callContract(
-    contractAddress: string,
-    method: string,
-    params: any[]
-  ): Promise<any> {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/contracts/call`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          contract_address: contractAddress,
-          method,
-          params,
-        }),
-      });
+  // ── Blocks ───────────────────────────────────────────────────────────────────
 
-      if (!response.ok) {
-        throw new Error('Failed to call contract');
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Error calling contract:', error);
-      throw error;
-    }
+  async getBlocks(limit = 10): Promise<Block[]> {
+    return this.fetchWithFailover<Block[]>(
+      `/blocks?limit=${limit}`, undefined, `blocks_${limit}`, 5
+    );
   }
 
-  async getDexPools(): Promise<any[]> {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/dex/pools`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch DEX pools');
-      }
-      return await response.json();
-    } catch (error) {
-      console.error('Error fetching DEX pools:', error);
-      return [];
-    }
+  async getBlockByNumber(n: number): Promise<Block> {
+    return this.fetchWithFailover<Block>(`/blocks/${n}`, undefined, `block_${n}`, 3600);
   }
 
-  async executeMint(
-    contractAddress: string,
-    recipient: string,
-    amount: number
-  ): Promise<TransactionResult> {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/contracts/call`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          contract_address: contractAddress,
-          method: 'mint',
-          params: [recipient, amount],
-        }),
-      });
+  // ── Transactions ─────────────────────────────────────────────────────────────
 
-      if (!response.ok) {
-        throw new Error('Failed to execute mint');
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Error executing mint:', error);
-      throw error;
-    }
+  async getTransactions(limit = 20): Promise<Transaction[]> {
+    return this.fetchWithFailover<Transaction[]>(
+      `/transactions?limit=${limit}`, undefined, `txs_${limit}`, 5
+    );
   }
 
-  async getShards(): Promise<any[]> {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/shards`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch shards');
-      }
-      return await response.json();
-    } catch (error) {
-      console.error('Error fetching shards:', error);
-      return [];
-    }
+  async getTransaction(hash: string): Promise<Transaction> {
+    return this.fetchWithFailover<Transaction>(
+      `/transactions/${hash}`, undefined, `tx_${hash}`, 3600
+    );
   }
 
-  async getSidechains(): Promise<any[]> {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/sidechains`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch sidechains');
-      }
-      return await response.json();
-    } catch (error) {
-      console.error('Error fetching sidechains:', error);
-      return [];
-    }
+  async getWalletTransactions(address: string, limit = 50): Promise<Transaction[]> {
+    return this.fetchWithFailover<Transaction[]>(
+      `/wallets/${address}/transactions?limit=${limit}`,
+      undefined,
+      `wallet_txs_${address}`,
+      10
+    );
   }
 
-  createWebSocket(): WebSocket | null {
-    try {
-      const wsUrl = this.baseUrl.replace('http', 'ws');
-      const ws = new WebSocket(`${wsUrl}/ws`);
+  // ── Balance ──────────────────────────────────────────────────────────────────
 
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ action: 'subscribe', channel: 'blockchain_status' }));
-      };
-
-      return ws;
-    } catch (error) {
-      console.error('Error creating WebSocket:', error);
-      return null;
-    }
+  async getBalance(address: string): Promise<WalletBalance> {
+    return this.fetchWithFailover<WalletBalance>(
+      `/wallets/${address}/balance`, undefined, `balance_${address}`, 15
+    );
   }
 
-  async createBlockchainRecord(
-    data: string,
-    recordType: string,
-    metadata?: any
-  ): Promise<TransactionResult> {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/transactions/create`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          data,
-          record_type: recordType,
-          metadata,
-          timestamp: new Date().toISOString(),
-        }),
-      });
+  // ── Broadcast transazione ────────────────────────────────────────────────────
 
-      if (!response.ok) {
-        const mockTxHash = `0x${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
-        return {
-          transaction_hash: mockTxHash,
-          status: 'pending',
-          block_number: 0,
-        };
-      }
+  async sendTransaction(signedTx: Record<string, unknown>): Promise<{ txHash: string }> {
+    return this.fetchWithFailover<{ txHash: string }>('/transactions', {
+      method: 'POST',
+      body:   JSON.stringify(signedTx),
+    });
+  }
 
-      return await response.json();
-    } catch (error) {
-      console.error('Error creating blockchain record:', error);
-      const mockTxHash = `0x${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
-      return {
-        transaction_hash: mockTxHash,
-        status: 'pending',
-        block_number: 0,
-      };
-    }
+  // ── IPFS ─────────────────────────────────────────────────────────────────────
+
+  async uploadToIPFS(file: File): Promise<{ cid: string; url: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await fetch(`${IPFS_API}/api/v0/add`, {
+      method: 'POST',
+      body:   formData,
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    if (!res.ok) throw new Error('Upload IPFS fallito');
+    const data = await res.json();
+    return {
+      cid: data.Hash,
+      url: `${IPFS_GATEWAY}/${data.Hash}`,
+    };
+  }
+
+  // ── Health check di tutti i nodi ─────────────────────────────────────────────
+
+  async checkAllNodes(): Promise<Array<{ url: string; online: boolean; latencyMs?: number }>> {
+    return Promise.all(
+      NODE_LIST.map(async (url) => {
+        const t0 = Date.now();
+        try {
+          const res = await fetch(`${url}/status`, {
+            signal: AbortSignal.timeout(3000),
+          });
+          return { url, online: res.ok, latencyMs: Date.now() - t0 };
+        } catch {
+          return { url, online: false };
+        }
+      })
+    );
   }
 }
 
-export const hashburstService = new HashBurstService();
+export const hashburstClient = new HashBurstClient();
