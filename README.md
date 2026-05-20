@@ -1,404 +1,383 @@
-# HashBurst - Blockchain & IPFS Platform
+# HashBurst — Blockchain & IPFS Platform
 
 A complete web application and infrastructure for the HashBurst blockchain mainnet with integrated IPFS storage, P2P networking, and resource federation.
 
-![HashBurst](https://img.shields.io/badge/HashBurst-Mainnet-blue)
-![Status](https://img.shields.io/badge/Status-Production%20Ready-green)
-![Network](https://img.shields.io/badge/Nodes-3%20Blockchain%20%2B%202%20IPFS-orange)
+[![HashBurst](https://img.shields.io/badge/HashBurst-Mainnet-blue)](https://hashburst.io)
+[![Status](https://img.shields.io/badge/Status-Production%20Ready-green)](https://hashburst.io/health)
+[![Network](https://img.shields.io/badge/Nodes-4%20Blockchain%20%2B%202%20IPFS-orange)](https://hashburst.io)
+[![Security](https://img.shields.io/badge/Keys-Local%20AES--256--GCM-green)](https://hashburst.io)
 
 ## What is HashBurst Core?
 
 HashBurst is a decentralized blockchain platform that combines:
-- **Blockchain Network**: 3-node mainnet with PoA consensus
+
+- **Blockchain Network**: 4-node mainnet with APoW + PoH consensus
 - **IPFS Storage**: Distributed file storage across 2 nodes
 - **P2P Network**: Trustless peer-to-peer architecture
 - **Resource Federation**: Share compute, storage, and bandwidth
-- **Web Dashboard**: Complete management interface
-- **Smart Contracts**: HBT-20 and HBT-721 support
+- **Web Dashboard**: Complete management interface — runs locally in the browser
+- **Smart Contracts**: HBT-20 and HBT-721 support via HVM
+- **Local-first Security**: Private keys never leave the user's device
+
+---
 
 ## Quick Start
 
 ### Prerequisites
+
 - Node.js 18+
 - npm or yarn
-- Access to servers (for deployment)
-- Docker (on servers)
+- A modern browser (Chrome 80+, Firefox 80+, Safari 14+, Edge 80+)
+- **HTTPS or localhost** — required for Web Crypto API (key encryption)
 
 ### Installation
 
 ```bash
 # Clone repository
-git clone [your-repo-url]
-cd hashburst
+git clone https://github.com/hashburst/HashBurst-Blockchain-WebApp-Core
+cd HashBurst-Blockchain-WebApp-Core
 
 # Install dependencies
 npm install
+
+# Configure environment
+cp .env.example .env
+# The default .env.example already points to https://hashburst.io/api
+# No changes needed for standard use
 
 # Start development server
 npm run dev
 ```
 
-Open http://localhost:5173 in your browser.
+Open **http://localhost:5173** in your browser.
+
+> **Note**: `crypto.subtle` (used for key encryption) requires either
+> `localhost` or an HTTPS origin. The dev server on localhost works out of the box.
 
 ### Deploy Mainnet Nodes
 
-Follow the complete guide: **[MAINNET_SETUP.md](MAINNET_SETUP.md)**
+Follow the complete guide: **[MAINNET_SETUP.md](./MAINNET_SETUP.md)**
 
-Quick version:
-```bash
-# 1. Deploy servers (see deployment/ folder)
-# 2. Register nodes
-npm run deploy:register
-
-# 3. Monitor network
-npm run deploy:monitor
-
-# 4. Start dashboard
-npm run dev
-```
+---
 
 ## Project Structure
 
 ```
 hashburst/
 ├── src/
-│   ├── components/          # React components
-│   │   ├── WalletManager.tsx          # Wallet management
-│   │   ├── NodeSetup.tsx              # Node deployment UI
-│   │   ├── FileUpload.tsx             # IPFS upload interface
-│   │   ├── RecordsViewer.tsx          # Blockchain records
-│   │   ├── SmartContracts.tsx         # Contract deployment
-│   │   ├── FederationDashboard.tsx    # Resource federation
-│   │   ├── P2PNetwork.tsx             # Network monitoring
-│   │   └── NetworkStatus.tsx          # Live stats
+│   ├── components/
+│   │   ├── WalletManager.tsx      # Local wallet management (no cloud)
+│   │   ├── NodeSetup.tsx          # Node deployment UI
+│   │   ├── FileUpload.tsx         # IPFS upload interface
+│   │   ├── RecordsViewer.tsx      # Blockchain records
+│   │   ├── SmartContracts.tsx     # Contract deployment
+│   │   ├── FederationDashboard.tsx# Resource federation
+│   │   ├── P2PNetwork.tsx         # Network monitoring
+│   │   ├── NetworkStatus.tsx      # Live stats
+│   │   └── Settings.tsx           # Local settings & backup
 │   │
-│   ├── services/            # Business logic
-│   │   ├── wallet.ts        # Wallet generation & management
-│   │   ├── node.ts          # Node configuration
-│   │   ├── hashburst.ts     # Blockchain API client
-│   │   ├── ipfs.ts          # IPFS integration
-│   │   └── federation.ts    # Resource management
+│   ├── services/
+│   │   ├── wallet.ts              # Wallet — local, AES-256-GCM encrypted
+│   │   ├── hashburst.ts           # Blockchain API client with failover
+│   │   └── ipfs.ts                # IPFS integration
 │   │
-│   ├── lib/                 # Utilities
-│   │   └── supabase.ts      # Database client & types
+│   ├── lib/
+│   │   ├── localStore.ts          # IndexedDB storage (replaces Supabase)
+│   │   ├── crypto.ts              # secp256k1 + AES-256-GCM + PBKDF2
+│   │   ├── config.ts              # Single source for env variables
+│   │   └── browserCheck.ts        # Browser compatibility checks
 │   │
-│   └── App.tsx              # Main application
+│   ├── hooks/
+│   │   ├── useWallets.ts          # Wallet state management + auto-lock
+│   │   └── useNetwork.ts          # Node polling & status
+│   │
+│   └── App.tsx                    # Main application
 │
-├── deployment/              # Server deployment files
-│   ├── server1-ubuntu/      # Server 1 (31.25.11.195)
-│   ├── server2-cloudlinux/  # Server 2 (85.187.128.14)
-│   ├── monitoring/          # Health checks & monitoring
-│   ├── register-nodes.ts    # Database registration
-│   ├── DEPLOYMENT.md        # Complete deployment guide
-│   └── README.md            # Deployment quick reference
+├── deployment/
+│   ├── server1-ubuntu/            # Node 1 (Equinix ML5)
+│   ├── server2-cloudlinux/        # Nodes 2 & 3 (Equinix ML5)
+│   ├── node4-hashburst-io/        # Node 4 — hashburst.io
+│   ├── monitoring/                # Health checks
+│   └── DEPLOYMENT.md
 │
-├── supabase/                # Database migrations
-│   └── migrations/          # SQL migration files
-│
-├── MAINNET_SETUP.md         # Quick deployment guide
-├── DEPLOYMENT_SUMMARY.md    # What was built
-└── README.md                # This file
+├── .env.example                   # Environment template (use this, not .env)
+├── MIGRATION_GUIDE.md             # Supabase → local storage migration log
+├── HTTPS_SETUP.md                 # How to configure SSL on the server
+├── MAINNET_SETUP.md               # Node deployment guide
+└── README.md
 ```
+
+---
+
+## Security Architecture
+
+### Private Keys — Local-First Model
+
+Private keys **never leave the user's device** and **never transit the network**.
+The model is identical to MetaMask and hardware wallets:
+
+```
+KEY GENERATION  →  secp256k1 via @noble/secp256k1 (in RAM only)
+      ↓
+ENCRYPTION      →  AES-256-GCM + PBKDF2(password, salt, 100 000 iter)
+      ↓
+STORAGE         →  IndexedDB (browser local database — never uploaded)
+      ↓
+DECRYPTION      →  In RAM on demand, discarded after use
+      ↓
+EXPORT/BACKUP   →  Encrypted .json file (safe to transfer)
+```
+
+> The old Supabase cloud storage has been fully removed.
+> See [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md) for details.
+
+### HTTPS Requirement
+
+The Web Crypto API (`crypto.subtle`) used for key encryption requires a
+**secure origin** — either `https://` or `localhost`.
+
+- `http://localhost:5173` ✅ development
+- `https://hashburst.io` ✅ production
+- `http://IP:PORT` ❌ crypto.subtle blocked by browser
+
+All API calls go through `https://hashburst.io` which terminates SSL via
+nginx + Let's Encrypt. Internal node communication remains HTTP inside
+the Docker network.
+
+---
+
+## Mainnet Network
+
+### Blockchain Nodes
+
+| Node | Location | Domain / IP | RPC | P2P |
+|------|----------|-------------|-----|-----|
+| Node 1 | Equinix ML5 | 85.187.128.14 | 8002 | 30303 |
+| Node 2 | Equinix ML5 | 85.187.128.14 | 8003 | 30304 |
+| Node 3 | Equinix ML5 | 85.187.128.14 | 8005 | 30305 |
+| Node 4 | hashburst.io | **https://hashburst.io/api** | 8007 | 30306 |
+
+> **Always use the domain `hashburst.io`, never a raw IP.**
+> If the server migrates to a new IP, only the DNS record needs updating —
+> no code or configuration changes required.
+
+### IPFS Nodes
+
+| Node | Gateway | API | Swarm |
+|------|---------|-----|-------|
+| IPFS 1 | https://hashburst.io/ipfs | /ipfs-api | 4001 |
+| IPFS 2 | 85.187.128.14:8081 | 5002 | 4002 |
+
+### Network Parameters
+
+| Parameter | Value |
+|-----------|-------|
+| Consensus | APoW (Adaptive Proof of Work) + PoH |
+| Block Time | 5 seconds |
+| Chain ID | 1337 |
+| Token | HBT |
+| Signature | CRYSTALS-Dilithium (NIST FIPS 204) |
+| Key Exchange | CRYSTALS-Kyber (NIST FIPS 203) |
+
+---
+
+## Environment Variables
+
+Copy `.env.example` to `.env`. The defaults work for standard mainnet use:
+
+```bash
+cp .env.example .env
+```
+
+```bash
+# .env.example — all defaults point to hashburst.io via HTTPS
+VITE_HASHBURST_NODE_PRIMARY=https://hashburst.io/api
+VITE_HASHBURST_NODES_FALLBACK=https://hashburst.io/api
+VITE_IPFS_GATEWAY=https://hashburst.io/ipfs
+VITE_IPFS_API=https://hashburst.io/ipfs-api
+VITE_HVM_ENDPOINT=https://hashburst.io/hvm
+VITE_CHAIN_ID=1337
+VITE_NETWORK_NAME=HashBurst Mainnet
+```
+
+> **Never commit `.env`** — it is already listed in `.gitignore`.
+> **Never use raw IPs** — use the domain so IP migrations are transparent.
+
+---
 
 ## Features
 
-### 1. **Wallet Management**
-- Generate secure wallets with cryptographic keys
-- Multiple wallet support
-- Backup and export functionality
-- Balance tracking
-- Transaction history
+### 1. Wallet Management (Local-First)
+- Generate wallets with secp256k1 keys (Ethereum-compatible)
+- Keys encrypted with AES-256-GCM + PBKDF2 — stored only in IndexedDB
+- Auto-lock after 15 minutes of inactivity
+- Export encrypted backup (.json file)
+- Import from backup with password verification
+- Change password (re-encrypts without exposing the key)
 
-### 2. **Node Deployment**
-- Download full node packages
-- Platform-specific installers (Linux, macOS, Windows, Docker)
+### 2. Node Deployment
+- Download full node packages for Linux / macOS / Windows / Docker
 - Automated configuration generation
 - Step-by-step setup wizard
 - Join mainnet with one click
 
-### 3. **File Upload & IPFS**
+### 3. File Upload & IPFS
 - Drag-and-drop file upload
-- Automatic IPFS storage
+- Automatic IPFS storage with CID
 - Blockchain record creation
-- Public record keeping
-- Content-addressed retrieval
+- Content-addressed retrieval via https://hashburst.io/ipfs/:cid
 
-### 4. **Public Records**
+### 4. Public Records
 - Browse all blockchain records
 - Filter by type (file, event, data, contract)
 - Real-time updates
-- IPFS content links
-- Transaction verification
+- IPFS content links and transaction verification
 
-### 5. **Smart Contracts**
+### 5. Smart Contracts
 - Deploy HBT-20 tokens (fungible)
 - Deploy HBT-721 NFTs (non-fungible)
-- Custom contract support
-- Contract interaction interface
+- Contract interaction via HVM at https://hashburst.io/hvm
 - Transaction tracking
 
-### 6. **Resource Federation**
+### 6. Resource Federation
 - Register compute resources
 - Allocate storage space
 - Share bandwidth
-- Earn rewards automatically
-- Reputation system
+- Earn HBT rewards automatically
 
-### 7. **P2P Network**
-- Real-time node monitoring
-- Connection status
-- Network statistics
-- Latency tracking
-- Peer discovery
-
-### 8. **Network Dashboard**
+### 7. Network Dashboard
 - Live blockchain stats
 - Block height tracking
 - Transaction throughput (TPS)
-- Active nodes counter
-- Network health indicators
+- Active nodes with latency
+- Automatic failover between nodes
 
-## Mainnet Information
+---
 
-### Deployed Nodes
-
-| Node | Server | IP | RPC | P2P |
-|------|--------|----|----|-----|
-| Node 1 | Ubuntu 24.04 | 31.25.11.195 | 8002 | 30303 |
-| Node 2 | CloudLinux 7.9 | 85.187.128.14 | 8003 | 30304 |
-| Node 3 | CloudLinux 7.9 | 85.187.128.14 | 8005 | 30305 |
-
-### IPFS Nodes
-
-| Node | Server | Gateway | API | Swarm |
-|------|--------|---------|-----|-------|
-| IPFS 1 | Ubuntu 24.04 | 8080 | 5001 | 4001 |
-| IPFS 2 | CloudLinux 7.9 | 8081 | 5002 | 4002 |
-
-### Network Stats
-- **Consensus**: Proof of Authority (PoA)
-- **Block Time**: 5 seconds
-- **Chain ID**: 1337
-- **Total Capacity**: 200GB storage, 8 CPU cores
-- **Network Type**: Trustless P2P Mesh
-
-## Development
-
-### Available Scripts
+## Available Scripts
 
 ```bash
 # Development
-npm run dev              # Start dev server
-npm run build            # Build for production
-npm run preview          # Preview production build
-npm run typecheck        # Type checking
+npm run dev          # Start dev server on localhost:5173
+npm run build        # Build for production
+npm run preview      # Preview production build
+npm run typecheck    # TypeScript type check
+npm run lint         # Lint code
 
-# Deployment
-npm run deploy:register  # Register nodes in database
+# Deployment & monitoring
 npm run deploy:monitor   # Check network status
 npm run deploy:health    # Continuous health monitoring
-
-# Code Quality
-npm run lint             # Lint code
 ```
 
-### Environment Variables
-
-Create `.env` file:
-```env
-# Supabase
-VITE_SUPABASE_URL=your_supabase_url
-VITE_SUPABASE_ANON_KEY=your_anon_key
-
-# HashBurst Mainnet (default)
-VITE_HASHBURST_API_URL=http://31.25.11.195:8002
-VITE_HASHBURST_BACKEND_URL=http://31.25.11.195:8001
-VITE_IPFS_GATEWAY=http://31.25.11.195:8080/ipfs
-VITE_IPFS_API=http://31.25.11.195:5001
-```
-
-### Database Setup
-
-Migrations are in `supabase/migrations/`:
-1. `create_hashburst_schema.sql` - Core tables
-2. `add_wallet_node_federation_schema.sql` - Extended features
-
-Tables created:
-- `blockchain_records` - File & data records
-- `network_nodes` - Node registry
-- `smart_contracts` - Deployed contracts
-- `user_wallets` - Wallet management
-- `federated_resources` - Resource allocation
-- `ipfs_nodes` - IPFS node registry
-- `node_transactions` - Transaction log
-- `p2p_connections` - Network connectivity
-
-All tables have Row Level Security (RLS) enabled.
+---
 
 ## Deployment
 
 ### Option 1: Quick Deploy (Recommended)
 
-Follow **[MAINNET_SETUP.md](MAINNET_SETUP.md)** for step-by-step guide.
+Follow **[MAINNET_SETUP.md](./MAINNET_SETUP.md)** for step-by-step guide.
 
-### Option 2: Manual Deploy
-
-See **[deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md)** for detailed instructions.
-
-### Option 3: Docker Compose
+### Option 2: Docker Compose
 
 ```bash
-# Server 1
-cd deployment/server1-ubuntu
-docker-compose up -d
+# Node 4 — hashburst.io (reference deployment with HTTPS)
+cd deployment/node4-hashburst-io
+sudo ./deploy.sh
 
-# Server 2
+# Equinix ML5 nodes
+cd deployment/server1-ubuntu
+docker compose up -d
+
 cd deployment/server2-cloudlinux
-docker-compose up -d
+docker compose up -d
 ```
+
+### Option 3: Manual
+
+See **[deployment/DEPLOYMENT.md](./deployment/DEPLOYMENT.md)**.
+
+---
 
 ## Monitoring
 
-### Check Network Status
 ```bash
+# Check all nodes via HTTPS
+curl https://hashburst.io/api/status | jq
+curl https://hashburst.io/health
+
+# NPM scripts
 npm run deploy:monitor
+npm run deploy:health
 ```
 
-### Continuous Health Check
-```bash
-npm run deploy:health &
-tail -f /var/log/hashburst-health.log
-```
+---
 
-### Node Endpoints
-```bash
-# Check individual nodes
-curl http://31.25.11.195:8002/api/status
-curl http://85.187.128.14:8003/api/status
-curl http://85.187.128.14:8005/api/status
+## Troubleshooting
 
-# Check IPFS nodes
-curl http://31.25.11.195:5001/api/v0/id
-curl http://85.187.128.14:5002/api/v0/id
-```
+**Nodes not connecting**
+- Verify P2P ports 30303–30306 are open in the firewall
+- Check bootstrap nodes are reachable
 
-## Security
+**IPFS upload fails**
+- Verify IPFS node is running: `curl https://hashburst.io/ipfs-api/api/v0/id`
+- Check available storage on the server
 
-- Row Level Security (RLS) on all database tables
-- Encrypted private keys in wallets
-- Firewall rules automatically configured
-- Docker container isolation
-- CORS properly configured
-- No secrets in source code
-- Environment variables for sensitive data
+**`crypto.subtle` / key encryption not working**
+- The app must run on `localhost` or `https://`. Raw `http://IP:PORT` blocks Web Crypto API.
+- See [HTTPS_SETUP.md](./HTTPS_SETUP.md) for server configuration.
+
+**Build fails**
+- Clear modules: `rm -rf node_modules && npm install`
+- Check Node version: `node -v` (must be 18+)
+
+---
 
 ## Earning Rewards
 
-1. **Create Wallet**: Use Wallet tab to generate address
-2. **Run Node**: Deploy using Node tab
-3. **Configure**: Add wallet to node config
-4. **Federate Resources**: Enable in node settings
-5. **Earn**: Automatic rewards for:
-   - Transaction validation
-   - IPFS file hosting
-   - Compute resources
-   - Storage allocation
-   - High uptime
+1. **Create Wallet** — use the Wallet tab (keys stay on your device)
+2. **Run a Node** — deploy using the Node tab or `deployment/` scripts
+3. **Configure** — add your HBT address to the node config as `rewardAddress`
+4. **Federate Resources** — enable in node settings
+5. **Earn** — automatic rewards for validation, IPFS hosting, compute, storage, uptime
 
-## How It Works
-
-### File Upload Flow
-1. User uploads file via web interface
-2. File sent to IPFS node → generates CID
-3. Transaction created on blockchain with CID
-4. Record stored in database
-5. File accessible via IPFS gateway
-
-### Node Communication
-1. Nodes connect via P2P protocol
-2. Bootstrap nodes provide initial peers
-3. Consensus through PoA algorithm
-4. Block propagation across network
-5. State synchronization
-
-### Resource Federation
-1. Node registers available resources
-2. Resources allocated to network
-3. Usage tracked automatically
-4. Rewards calculated and distributed
-5. Reputation score maintained
+---
 
 ## Documentation
 
-- **Quick Start**: This README
-- **Deployment**: [MAINNET_SETUP.md](MAINNET_SETUP.md)
-- **Full Guide**: [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md)
-- **Summary**: [DEPLOYMENT_SUMMARY.md](DEPLOYMENT_SUMMARY.md)
-- **HashBurst Framework**: https://github.com/hashburst/blockchain-hvm-framework
+| Document | Description |
+|----------|-------------|
+| [README.md](./README.md) | This file |
+| [MAINNET_SETUP.md](./MAINNET_SETUP.md) | Node deployment guide |
+| [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md) | Supabase → local storage migration |
+| [HTTPS_SETUP.md](./HTTPS_SETUP.md) | SSL configuration for hashburst.io |
+| [deployment/DEPLOYMENT.md](./deployment/DEPLOYMENT.md) | Full deployment reference |
+| [DEPLOYMENT_SUMMARY.md](./DEPLOYMENT_SUMMARY.md) | Infrastructure summary |
+
+---
 
 ## Contributing
 
 1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing`)
-5. Open Pull Request
+2. Create a feature branch: `git checkout -b feature/my-feature`
+3. Commit your changes: `git commit -m 'feat: add my feature'`
+4. Push: `git push origin feature/my-feature`
+5. Open a Pull Request
 
-## License
-
-This project is part of the HashBurst blockchain ecosystem.
-
-## Troubleshooting
-
-### Nodes Not Connecting
-- Check firewall rules
-- Verify P2P ports open
-- Check bootstrap nodes
-
-### IPFS Upload Fails
-- Verify IPFS node running
-- Check API endpoint
-- Ensure sufficient storage
-
-### Database Errors
-- Check Supabase credentials
-- Verify RLS policies
-- Run migrations
-
-### Build Fails
-- Clear node_modules: `rm -rf node_modules && npm install`
-- Clear cache: `npm run build -- --force`
-- Check Node version: `node -v` (should be 18+)
-
-## Support
-
-- **Issues**: Create on GitHub
-- **Documentation**: See files above
-- **Network Status**: `npm run deploy:monitor`
-
-## Success:
-
-HashBurst mainnet is ready when you see:
-- All nodes online in Network tab
-- IPFS nodes accessible
-- Can upload files
-- Records appear in blockchain
-- P2P connections active
+---
 
 ## Links
 
-- **GitHub**: https://github.com/hashburst/blockchain-hvm-framework
-- **Mainnet**: http://31.25.11.195:8002
-- **IPFS**: http://31.25.11.195:8080
+- **Explorer**: https://hashburst.io
+- **API**: https://hashburst.io/api/status
+- **IPFS Gateway**: https://hashburst.io/ipfs
+- **GitHub Org**: https://github.com/hashburst
 
 ---
 
 **Built with**:
-React • TypeScript • Vite • Tailwind CSS • Supabase • Docker • IPFS • HashBurst
+React · TypeScript · Vite · Tailwind CSS · @noble/secp256k1 · IndexedDB · Docker · IPFS · HashBurst HVM
 
-**Network Status**: Production Ready
-**Version**: 1.0.0
-**Nodes**: 3 Blockchain + 2 IPFS
-**Architecture**: Trustless P2P
-
-**Welcome to HashBurst Mainnet!**
+**Network Status**: Production Ready  
+**Version**: 2.0.0  
+**Nodes**: 4 Blockchain + 2 IPFS  
+**Architecture**: Trustless P2P · Local-First · Post-Quantum Ready
