@@ -56,7 +56,12 @@ Open **http://localhost:5173** in your browser.
 
 ### Deploy Mainnet Nodes
 
-Follow the complete guide: **[MAINNET_SETUP.md](./MAINNET_SETUP.md)**
+For automated production deployment of HashBurst blockchain and sovereign storage nodes, use the official **[HashBurst Node Installer](https://github.com/hashburst/node-installer)**.
+
+Current stable release: **v2.1.2**  
+Release packages and notes: **[HashBurst Node Installer Releases](https://github.com/hashburst/node-installer/releases)**
+
+For the complete mainnet architecture and manual deployment reference, see **[MAINNET_SETUP.md](./MAINNET_SETUP.md)**.
 
 ---
 
