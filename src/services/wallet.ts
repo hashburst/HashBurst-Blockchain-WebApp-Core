@@ -21,6 +21,7 @@ import {
   encryptPrivateKey,
   decryptPrivateKey,
   generateKeyPair,
+  keyPairFromPrivateKey,
   generateId,
   checkPasswordStrength,
   type PasswordStrength,
@@ -93,14 +94,7 @@ export async function importWalletFromPrivateKey(
     throw new Error(`Password troppo debole: ${strength.label}`);
   }
 
-  // Ricava address dalla chiave privata
-  // (in produzione: secp256k1 → keccak256; qui SHA-256 per demo)
-  const enc = new TextEncoder();
-  const hashBuf = await crypto.subtle.digest('SHA-256',
-    enc.encode(privateKeyHex));
-  const hashHex = Array.from(new Uint8Array(hashBuf))
-    .map(b => b.toString(16).padStart(2,'0')).join('');
-  const address = '0x' + hashHex.slice(24);
+  const keys = keyPairFromPrivateKey(privateKeyHex);
 
   const { encryptedPrivateKey, salt, iv } = await encryptPrivateKey(
     privateKeyHex, password
@@ -109,8 +103,8 @@ export async function importWalletFromPrivateKey(
   const wallet: StoredWallet = {
     id: generateId(),
     name: name.trim() || 'Wallet importato',
-    address,
-    publicKey: hashHex,
+    address: keys.address,
+    publicKey: keys.publicKeyHex,
     encryptedPrivateKey,
     salt,
     iv,
