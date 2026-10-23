@@ -52,13 +52,24 @@ export async function decryptPrivateKey(
 
 export interface KeyPair { privateKeyHex: string; publicKeyHex: string; address: string; }
 
+export function keyPairFromPrivateKey(privateKeyHex: string): KeyPair {
+  if (!/^[0-9a-fA-F]{64}$/.test(privateKeyHex)) {
+    throw new Error('Private key must contain 64 hexadecimal characters');
+  }
+  const priv = hexToBuf(privateKeyHex);
+  if (!secp.utils.isValidPrivateKey(priv)) {
+    throw new Error('Invalid secp256k1 private key');
+  }
+  const publicKey = secp.getPublicKey(priv, false).slice(1);
+  return {
+    privateKeyHex: bufToHex(priv),
+    publicKeyHex: bufToHex(publicKey),
+    address: '0x' + bufToHex(keccak_256(publicKey)).slice(24),
+  };
+}
+
 export async function generateKeyPair(): Promise<KeyPair> {
-  const priv   = secp.utils.randomPrivateKey();
-  const pubFull = secp.getPublicKey(priv, false);
-  const pub     = pubFull.slice(1);
-  const hash    = keccak_256(pub);
-  return { privateKeyHex: bufToHex(priv), publicKeyHex: bufToHex(pub),
-           address: '0x' + bufToHex(hash).slice(24) };
+  return keyPairFromPrivateKey(bufToHex(secp.utils.randomPrivateKey()));
 }
 
 export async function signMessage(messageHex: string, privateKeyHex: string): Promise<string> {

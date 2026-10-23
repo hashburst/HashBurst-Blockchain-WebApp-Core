@@ -1,0 +1,20 @@
+name: Wallet address validation
+on:
+  pull_request:
+    paths: ['src/lib/crypto.ts', 'src/services/wallet.ts', 'tests/wallet-key.mjs', '.github/workflows/wallet-address.yml']
+  push:
+    branches: [fix/wallet-import-address]
+permissions:
+  contents: read
+jobs:
+  wallet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node tests/wallet-key.mjs
+      - run: npm run build
